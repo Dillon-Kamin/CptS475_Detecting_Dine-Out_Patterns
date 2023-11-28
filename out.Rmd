@@ -1,0 +1,70 @@
+---
+# title: "Dineout EDA"
+author: "Dillon"
+date: "2023-11-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(sf)
+library(dplyr)
+restaurants = read.csv("restaurants.csv")
+movements = read.csv("movements.csv")
+
+# buffers
+buffer_full = 0.015
+buffer_limited = 0.01
+buffer_market = 0.05
+buffer_supermarc = 0.05
+buffer_warehouse = 0.05
+buffer_conv = 0.01
+```
+
+# Categories of restaurants
+```{r, echo=TRUE}
+unique(restaurants$Category)
+```
+
+# Convert locations df with long. and lat. data into sf data object and add buffers around restaurants
+
+```{r, echo=TRUE}
+rest_sf <- st_as_sf(restaurants[, c("Name", "Category", "Longitude", "Latitude")], coords = c("Longitude", "Latitude"))
+buffer = 0.002
+rest_with_buffs <- st_buffer(rest_sf, dist = buffer)
+plot(select(rest_with_buffs, -Category), col = "lightblue", main = "Restaurants")
+#text(st_coordinates(rest_with_buffs)[, "X"], st_coordinates(rest_with_buffs)[, "Y"], labels = rest_with_buffs$Name, col = "red")
+```
+# Find points in movements that are inside restaurant's buffers
+```{r, echo=TRUE}
+movements_sf <- st_as_sf(movements, coords = c("longitude", "latitude"))
+tmp <- st_within(movements_sf, rest_with_buffs, sparse = FALSE)
+intersects <- as.data.frame(tmp)
+```
+
+# Reduce to only contain id of restaurant within (or 0 if not within any buffer)
+
+```{r, echo=TRUE}
+intersects_reduced <- max.col(intersects != 0, ties.method = "first")
+intersects_reduced[!rowSums(intersects != 0) > 0] <- 0
+intersects_reduced <- data.frame(location = intersects_reduced)
+```
+
+# View visits
+
+```{r, echo=TRUE}
+intersects_reduced[100, ]
+intersects[100, ]
+
+intersects_reduced[1, ]
+intersects[1, ]
+
+intersects_reduced <- cbind(intersects_reduced, movements$datetime)
+head(intersects_reduced)
+
+intersects_reduced
+```
+
+# Loop through data frame, start tmp visit variable when 'visit' starts. If long enough, continue. Consider short breaks (going out to car? etc) and excessive visits (job?)
+
+```{r, echo=TRUE}
+```
