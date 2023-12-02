@@ -5,66 +5,154 @@ date: "2023-11-20"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
+# Setup
+
+```{r setup, echo=TRUE}
+# libraries
 library(sf)
 library(dplyr)
+
+# data sets
 restaurants = read.csv("restaurants.csv")
 movements = read.csv("movements.csv")
 
-# buffers
-buffer_full = 0.015
-buffer_limited = 0.01
-buffer_market = 0.05
-buffer_supermarc = 0.05
-buffer_warehouse = 0.05
-buffer_conv = 0.01
+# function for calculating buffer based on an input in sq. footage (circle->radius in feet->meters->coords)
+calc_buffer <- function(size)
+{
+  return((((size / pi)^(0.5))*0.3048)/111111)
+}
 ```
 
 # Categories of restaurants
+
+```{r, echo=TRUE} 
+unique(restaurants$Category) 
+``` 
+
+# Parameters
+
 ```{r, echo=TRUE}
-unique(restaurants$Category)
+# buffers for categories of restaurants (converted from ft. sq.)
+buffer_full = calc_buffer(5000)
+buffer_limited = calc_buffer(2000)
+buffer_market = calc_buffer(22500)
+buffer_supermarc = calc_buffer(33360)
+buffer_warehouse = calc_buffer(187000)
+buffer_conv = calc_buffer(2000)
+
+# threshold for considering a new visit (in minutes)
+time_gap_threshold <- 5
 ```
 
-# Convert locations df with long. and lat. data into sf data object and add buffers around restaurants
+# Convert restaurant set into sf object and add buffers (dependent on category)
 
 ```{r, echo=TRUE}
+# Convert restaurants to sf object. Keep "Name" and "Category" variables. Use Long and Lat for coordinates.
 rest_sf <- st_as_sf(restaurants[, c("Name", "Category", "Longitude", "Latitude")], coords = c("Longitude", "Latitude"))
-buffer = 0.002
-rest_with_buffs <- st_buffer(rest_sf, dist = buffer)
-plot(select(rest_with_buffs, -Category), col = "lightblue", main = "Restaurants")
-#text(st_coordinates(rest_with_buffs)[, "X"], st_coordinates(rest_with_buffs)[, "Y"], labels = rest_with_buffs$Name, col = "red")
-```
-# Find points in movements that are inside restaurant's buffers
-```{r, echo=TRUE}
-movements_sf <- st_as_sf(movements, coords = c("longitude", "latitude"))
-tmp <- st_within(movements_sf, rest_with_buffs, sparse = FALSE)
-intersects <- as.data.frame(tmp)
+
+# Add column for appropriate buffers then apply them to the object
+rest_sf <- rest_sf %>% 
+  mutate(buffer = case_when(
+    Category == "Full-Service Restaurants" ~ buffer_full,
+    Category == "Limited-Service Restaurants" ~ buffer_limited,
+    Category == "Fruit & Vegetable Markets" ~ buffer_market,
+    Category == "Supermarkets/Other Grocery (Exc Convenience) Strs" ~ buffer_supermarc,
+    Category == "Warehouse Clubs & Supercenters" ~ buffer_warehouse,
+    Category == "Convenience Stores" ~ buffer_conv
+  ))
+rest_sf <- st_buffer(rest_sf, dist = rest_sf$buffer)
+
+# Plot of restaurants with buffers (!!!!! ADD LABELS AND STUFF !!!!!!!)
+plot(select(rest_sf, -Category, -buffer), col = "lightblue", main = "Restaurants")
 ```
 
-# Reduce to only contain id of restaurant within (or 0 if not within any buffer)
+# For each point in the movement set, find which (if any) restaurant's buffer it is within.
+* Creates a data frame of TRUE and FALSE where movements are observations and each restaurant's buffer is a variable
 
 ```{r, echo=TRUE}
-intersects_reduced <- max.col(intersects != 0, ties.method = "first")
-intersects_reduced[!rowSums(intersects != 0) > 0] <- 0
-intersects_reduced <- data.frame(location = intersects_reduced)
+# Use long and lat in movements data set against restaurant buffers using st_within
+movements_within <- as.data.frame(st_within(st_as_sf(movements, coords = c("longitude", "latitude")), rest_sf, sparse = FALSE))
+```
+
+# Reduce movements_within to only contain id of restaurant within or 0 if not within any. Bind the datetime as well.
+
+```{r, echo=TRUE}
+# If whole row is FALSE, set to 0, otherwise set to index of TRUE. Convert to a data frame.
+movements_within <- data.frame(location = ifelse(rowSums(movements_within) == 0, 0, max.col(movements_within)))
+
+# Bind datetime from movements set (convert to POSIX as well)
+movements_within <- cbind(movements_within, datetime = as.POSIXct(movements$datetime))
+
 ```
 
 # View visits
 
 ```{r, echo=TRUE}
-intersects_reduced[100, ]
-intersects[100, ]
-
-intersects_reduced[1, ]
-intersects[1, ]
-
-intersects_reduced <- cbind(intersects_reduced, movements$datetime)
-head(intersects_reduced)
-
-intersects_reduced
+head(movements_within)
 ```
 
-# Loop through data frame, start tmp visit variable when 'visit' starts. If long enough, continue. Consider short breaks (going out to car? etc) and excessive visits (job?)
+# Cleanup for memory 
+
+```{r, echo=FALSE}
+rm(movements)
+gc()
+```
+
+# Collect consecutive time spent in a location into a single "visit"
 
 ```{r, echo=TRUE}
+# Create data frame for visits
+visits <- data.frame(loc = numeric(0), start = character(0), end = character(0), stringsAsFactors = FALSE)
+
+# New visit starts when prev location is different from current then use cumsum to give each an ID
+movements_within <- movements_within %>%
+  mutate(new_visit = location != lag(location, default = FALSE))
+movements_within <- movements_within %>%
+  mutate(visit_id = cumsum(new_visit))
+
+# Filter out non-visits and reduce the group forming a visit (by visit_id) into location, start datetime and end datetime
+visits <- movements_within %>%
+  filter(location != 0) %>%
+  group_by(visit_id) %>%
+  summarize(loc = first(location), start = first(datetime), end = last(datetime)) %>%
+  ungroup() %>%
+  select(-visit_id)
+
 ```
+
+# For consecutive visits to the same location, if the time between visits in under threshold (in minutes), merge into one.
+* Could be stepping out to car, or to smoke, etc.
+
+```{r, echo=TRUE}
+# Check if location of next visit is same location And if the gap in time is under threshold.
+# If yes, time_gap = difftime, otherwise make it 0. If a gap is present, mark the leading row for removal 
+# and replace the end time with proper end. Then remove redundant (marked) and reduce to loc, start, end.
+visits <- visits %>%
+  mutate (time_gap = ifelse(loc == lead(loc) & difftime(lead(start), end, units = "mins") <= time_gap_threshold, 
+                      difftime(lead(start), end, units = "mins"), 0),
+          rm = ifelse(lag(time_gap, default = 0) > 0, 1, 0),
+          end = if_else(time_gap > 0, as.POSIXct(lead(end)), end)
+         ) %>%
+  filter(rm == 0) %>%
+  select(-rm)
+```
+
+# Visualize visits
+
+```{r, echo=TRUE}
+
+# Column for visit length???
+
+# Vis based on visit length???
+
+# Replace loc with restaurants name or code??? (use mutate(buffer = case_when())...)
+
+# Heatmap/bubble map??? 
+
+head(visits)
+```
+
+# Classify visits based on time spent there, time gaps, location, etc.
+
+
+
