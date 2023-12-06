@@ -1,5 +1,5 @@
 ---
-# title: "Dineout EDA"
+# title: "Dineout"
 author: "Dillon"
 date: "2023-11-20"
 output: pdf_document
@@ -11,6 +11,7 @@ output: pdf_document
 # libraries
 library(sf)
 library(dplyr)
+library(ggplot2)
 
 # data sets
 restaurants = read.csv("restaurants.csv")
@@ -23,11 +24,35 @@ calc_buffer <- function(size)
 }
 ```
 
-# Categories of restaurants
+# Cleaning up movements
 
-```{r, echo=TRUE} 
-unique(restaurants$Category) 
-``` 
+```{r, echo=TRUE}
+# Sort by datetime
+movements <- movements %>%
+  mutate(datetime = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S")) %>%
+  arrange(datetime)
+
+# Filter duplicates
+movements <- movements %>%
+  mutate(err = if_else(datetime > lag(datetime, default = as.POSIXct("2019-12-31 23:59:59", format = "%Y-%m-%d %H:%M:%S")), 0, 1)) %>%
+  filter(err == 0)
+```
+
+# EDA
+
+```{r, echo=TRUE}
+# Categories of restaurants
+rest_types <- restaurants %>%
+  count(Category)
+rest_types
+
+restaurants
+
+# Time range
+#print(first(movements$datetime))
+#print(last(movements$datetime))
+#print(difftime(last(movements$datetime), first(movements$datetime)))
+```
 
 # Parameters
 
@@ -121,7 +146,7 @@ visits <- movements_within %>%
 ```
 
 # For consecutive visits to the same location, if the time between visits in under threshold (in minutes), merge into one.
-* Could be stepping out to car, or to smoke, etc.
+* Could be stepping out to car, or to smoke, etc. 
 
 ```{r, echo=TRUE}
 # Check if location of next visit is same location And if the gap in time is under threshold.
@@ -141,18 +166,55 @@ visits <- visits %>%
 
 ```{r, echo=TRUE}
 
-# Column for visit length???
+# Column for visit length
+visits <- mutate(visits, length = round(difftime(end, start, units = "mins"), 2))
 
-# Vis based on visit length???
+# Filter out 0 length visits
+visits <- filter(visits, visits$length > 0)
 
-# Replace loc with restaurants name or code??? (use mutate(buffer = case_when())...)
+# Replace loc with restaurant names and add categories from the data set
+visits$Category <- restaurants$Category[visits$loc] 
+visits$loc <- restaurants$Name[visits$loc]
 
-# Heatmap/bubble map??? 
+# Tabular of min max mean stdev of visit by location, category, etc.
+print("Visit Stats By Category")
+category_stats <- visits %>%
+  group_by(Category) %>%
+  summarize(
+    min = min(length),
+    max = max(length),
+    avg = mean(length),
+    sdev = sd(length),
+    total = n()
+  )
+print(category_stats)
+
+# Tabular of min max mean stdev of visit by location, category, etc.
+print("Visit Stats By Location")
+loc_stats <- visits %>%
+  group_by(loc) %>%
+  summarize(
+    min = min(length),
+    max = max(length),
+    avg = mean(length),
+    sdev = sd(length),
+    total = n()
+  )
+print(loc_stats)
+
+# Boxplot by Category
+ggplot(visits, aes(x = Category, y = length)) +
+  geom_boxplot() +
+  labs(title = "Plot of Visit Length by Category", x="", y = "Visit Length") +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5))
+
+# Boxplot by Location
+ggplot(visits, aes(x = loc, y = length)) +
+  geom_boxplot() +
+  labs(title = "Plot of Visit Length by Location", x="", y = "Visit Length") +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5))
 
 head(visits)
 ```
-
-# Classify visits based on time spent there, time gaps, location, etc.
-
-
-
