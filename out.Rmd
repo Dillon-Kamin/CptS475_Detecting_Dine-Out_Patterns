@@ -12,6 +12,7 @@ output: pdf_document
 library(sf)
 library(dplyr)
 library(ggplot2)
+library(jpeg)
 
 # data sets
 restaurants = read.csv("restaurants.csv")
@@ -87,8 +88,7 @@ rest_sf <- rest_sf %>%
   ))
 rest_sf <- st_buffer(rest_sf, dist = rest_sf$buffer)
 
-# Plot of restaurants with buffers (!!!!! ADD LABELS AND STUFF !!!!!!!)
-plot(select(rest_sf, -Category, -buffer), col = "lightblue", main = "Restaurants")
+plot(select(rest_sf, -Category, -buffer), col = "red", main = "Restaurants")
 ```
 
 # For each point in the movement set, find which (if any) restaurant's buffer it is within.
@@ -169,12 +169,20 @@ visits <- visits %>%
 # Column for visit length
 visits <- mutate(visits, length = round(difftime(end, start, units = "mins"), 2))
 
-# Filter out 0 length visits
-visits <- filter(visits, visits$length > 0)
-
 # Replace loc with restaurant names and add categories from the data set
 visits$Category <- restaurants$Category[visits$loc] 
 visits$loc <- restaurants$Name[visits$loc]
+
+# Filter out visits under category dependent length
+visits <- visits %>%
+  filter(case_when(
+    Category == "Full-Service Restaurants" ~ length > 10,
+    Category == "Limited-Service Restaurants" ~ length > 5,
+    Category == "Fruit & Vegetable Markets" ~ length > 5,
+    Category == "Supermarkets/Other Grocery (Exc Convenience) Strs" ~ length > 5,
+    Category == "Warehouse Clubs & Supercenters" ~ length > 5,
+    Category == "Convenience Stores" ~ length > 2
+  ))
 
 # Tabular of min max mean stdev of visit by location, category, etc.
 print("Visit Stats By Category")
@@ -201,6 +209,22 @@ loc_stats <- visits %>%
     total = n()
   )
 print(loc_stats)
+
+# Bar plots for visit #s
+ggplot(category_stats, aes(x = Category, y = total)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_text(aes(label = total), vjust = -0.5, color = "black") +
+  labs(title = "Visits by Category", x = "", y = "Visits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5))
+ggplot(loc_stats, aes(x = loc, y = total)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_text(aes(label = total), vjust = -0.5, color = "black") +
+  labs(title = "Visits by Location", x = "", y = "Visits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5))
 
 # Boxplot by Category
 ggplot(visits, aes(x = Category, y = length)) +
