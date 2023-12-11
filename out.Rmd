@@ -59,15 +59,15 @@ restaurants
 
 ```{r, echo=TRUE}
 # buffers for categories of restaurants (converted from ft. sq.)
-buffer_full = calc_buffer(5000)
-buffer_limited = calc_buffer(2000)
-buffer_market = calc_buffer(22500)
-buffer_supermarc = calc_buffer(33360)
-buffer_warehouse = calc_buffer(187000)
-buffer_conv = calc_buffer(2000)
+buffer_full = calc_buffer(10000)+0.0001
+buffer_limited = calc_buffer(3740)+0.0001
+buffer_market = calc_buffer(22500)+0.0001
+buffer_supermarc = calc_buffer(48415)+0.0001
+buffer_warehouse = calc_buffer(140000)+0.0001
+buffer_conv = calc_buffer(2500)+0.0001
 
 # threshold for considering a new visit (in minutes)
-time_gap_threshold <- 5
+time_gap_threshold <- 6
 ```
 
 # Convert restaurant set into sf object and add buffers (dependent on category)
@@ -176,14 +176,16 @@ visits$loc <- restaurants$Name[visits$loc]
 # Filter out visits under category dependent length
 visits <- visits %>%
   filter(case_when(
-    Category == "Full-Service Restaurants" ~ length > 10,
-    Category == "Limited-Service Restaurants" ~ length > 5,
+    Category == "Full-Service Restaurants" ~ length > 15,
+    Category == "Limited-Service Restaurants" ~ length > 4,
     Category == "Fruit & Vegetable Markets" ~ length > 5,
     Category == "Supermarkets/Other Grocery (Exc Convenience) Strs" ~ length > 5,
     Category == "Warehouse Clubs & Supercenters" ~ length > 5,
-    Category == "Convenience Stores" ~ length > 2
+    Category == "Convenience Stores" ~ length > 3
   ))
+```
 
+```{r, echo=TRUE}
 # Tabular of min max mean stdev of visit by location, category, etc.
 print("Visit Stats By Category")
 category_stats <- visits %>%
@@ -210,35 +212,55 @@ loc_stats <- visits %>%
   )
 print(loc_stats)
 
-# Bar plots for visit #s
-ggplot(category_stats, aes(x = Category, y = total)) +
+# Bar plots for visits
+cate_bar <- ggplot(category_stats, aes(x = Category, y = total)) +
   geom_bar(stat = "identity", fill = "lightblue") +
   geom_text(aes(label = total), vjust = -0.5, color = "black") +
   labs(title = "Visits by Category", x = "", y = "Visits") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8),
-        plot.title = element_text(hjust = 0.5))
-ggplot(loc_stats, aes(x = loc, y = total)) +
+        plot.title = element_text(hjust = 0.5),
+    plot.margin = margin(t = 20, r = 20, b = 1, l = 20, unit = "pt"))+
+  ylim(0, max(category_stats$total) + 1000) 
+loc_bar <- ggplot(loc_stats, aes(x = loc, y = total)) +
   geom_bar(stat = "identity", fill = "lightblue") +
-  geom_text(aes(label = total), vjust = -0.5, color = "black") +
+  geom_text(aes(label = total), angle = 33, vjust = 0, hjust = 0, color = "black") +
   labs(title = "Visits by Location", x = "", y = "Visits") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8),
-        plot.title = element_text(hjust = 0.5))
+        plot.title = element_text(hjust = 0.5),
+    plot.margin = margin(t = 20, r = 20, b = 1, l = 20, unit = "pt"))+
+  ylim(0, max(loc_stats$total) + 500)+
+  scale_x_discrete(expand = c(0.05, 0))
 
 # Boxplot by Category
-ggplot(visits, aes(x = Category, y = length)) +
+cate_box <- ggplot(visits, aes(x = Category, y = length)) +
   geom_boxplot() +
-  labs(title = "Plot of Visit Length by Category", x="", y = "Visit Length") +
+  labs(title = "Visit Length by Category", x="", y = "Visit Length") +
   theme(axis.text.x = element_text(angle = 20, hjust = 1, size = 8),
-        plot.title = element_text(hjust = 0.5))
+        plot.title = element_text(hjust = 0.5),
+    plot.margin = margin(t = 20, r = 20, b = 1, l = 20, unit = "pt"))
 
 # Boxplot by Location
-ggplot(visits, aes(x = loc, y = length)) +
+loc_box <- ggplot(visits, aes(x = loc, y = length)) +
   geom_boxplot() +
-  labs(title = "Plot of Visit Length by Location", x="", y = "Visit Length") +
-  theme(axis.text.x = element_text(angle = 20, hjust = 1, size = 8),
-        plot.title = element_text(hjust = 0.5))
+  labs(title = "Visit Length by Location", x="", y = "Visit Length") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 8),
+        plot.title = element_text(hjust = 0.5),
+    plot.margin = margin(t = 20, r = 20, b = 1, l = 20, unit = "pt"))
 
-head(visits)
+cate_bar
+loc_bar
+cate_box
+loc_box
+
+# Time between visits
+visits <- visits %>%
+  mutate(time_to_next = as.numeric(difftime(lead(start), end, units = "mins")))
+between_stats <- visits %>%
+  summarise(
+    min_time_to_next = min(time_to_next, na.rm = TRUE),
+    max_time_to_next = max(time_to_next, na.rm = TRUE),
+    avg_time_to_next = mean(time_to_next, na.rm = TRUE),
+    sdev_time_to_next = sd(time_to_next, na.rm = TRUE))
 ```
